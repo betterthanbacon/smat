@@ -1,0 +1,78 @@
+FEATURES:
+
+- Add stride to at least the elementwise operations, so that slices  do not need to be explicitly copied before performing calculations from/to them
+- Add logical indexing. This is especially important for dealing with NaNs, since cannot implement proper masking with elemwise multiply in that case (0*NaN = NaN)
+- Add tile/repeat_y, and tile/repeat_xy on both axes simultaneously.
+- Add argmax() and argmin().
+- Add alias amin/amax for max/min.
+- Add alias bitwise_and/or/xor for band,bor,bxor.
+- Add randf,sample,random,random_sample,randint,
+- Add arcsin,arcsinh, etc implemented as CUDA kernels, only for float types.
+- Add diff_x
+- Add n-dimensional (tensor) support, instead of just two-dimensional.
+- Add reciprocal
+- Add modf?
+- Add left_shift/right_shift.
+- Add numpy-mode that replicates Numpy indexing behaviour as precisely as possible.
+- Add nanmax
+- Add strides to sarray class
+- Add contiguous-column slicing via separate stride member on each matrix.
+- Add ability to permute rows of several matrices *jointly*, e.g. (inputs,targets);
+      either via fancy indexing or a special shuffle function.
+- Use pydot to visualize optimization process, show computation graphs (maybe for deepity instead?)
+
+BUGS:
+
+- SMAT needs its own dtype so that when saying, for example, float32(A) the returned object is of type sarray, not ndarray
+- broadcast scalar to matrix seems to have corner cases that don't work.
+- error messages from C++ smat should detect if being run by smat_py and rearrange the reported shape from (row,col,depth) to (x,y,z)
+
+CUDA PERFORMANCE:
+
+- Call CUBLAS for all matrix-vector products.
+- Finish auto-tuning framework, with on-the-fly compilation of kernels with max-register optimized per-kernel,perk-blocksize, 
+  according to architecure occupancy limits -- this is important, as custom build rules/makefiles is not an adequate way 
+  to approach this. The performance ramifications are 2x-10x in many cases.
+- Add interface to smat that correponds to CUBLAS batch operations, especially batch-GEMMs.
+  - However, should not *require* using batch interface to see performance enhancements;
+    the backend optimizer should look for large sets of small independent GEMM operations, etc, and
+    automatically transform them into a single batched instruction before it gets executed.
+- Fix reduce_r kernel so that it can handle really really wide matrices (currently can hit max grid size limit)
+- Faster nnz function.
+- Make a version of full reduce operation that computes fast scalar product of two matrices, rather than separate operations like reduce(X*Y)
+- Faster transpose for non-float matrix types (f32/f64 calls CUBLAS already); see NVIDIA samples, but don't bother with partition camping optimizations, since it's only for old cards.
+- Automatic inplace optimizations in machine.
+- Transpose of row/col vector should be done via reshape? (inconsistent copy/view semantics with non-vector case)
+- Faster tile/repeat kernels
+- Optimize over Shared/L1 cache configuration as part of CUDA autotuning.
+- Optimize heap alloc/free; at least use separate allocator for nodes/array structures, 
+  rather than thread-safe default heap allocator.
+
+MACHINE PERFORMANCE:
+
+- Change heap.cpp bucket mechanism so that blocks can be promoted/demoted based on largest free slot size.
+  The right way to track "largest free allocation" is to store a single biggest_slot_size value on each
+  block, and allow it to be an upper bound on the actual biggest slot size; when alloc()
+  scans the block, hoping for a big enough slot, if it fails the biggest_slot_size value can be set
+  to a tight value and the block can be demoted to a lower bucket if the new biggest_slot_size 
+  value steps over a bucket size threshold.
+- Add performance warning mechanism to logging.h. For example, CUDA kernels that run faster when 
+  certain things are aligned and/or multiples of each other -- don't force user to adhere to the 
+  fastest case, but allow them to investigate performance problems once they care to Address it.
+- Implement copy propagation in machine.
+- Implement dead code elimination, and flag disabling it.
+
+PYTHON WRAPPER PERFORMANCE:
+- Switch from ctypes to a proper C++ wrapper to avoid several 
+  layers of shitty Python overhead; will be harder for native
+  Python users to debug unless done with great care for error reporting.
+   - Notes. Overhead is ~1us (microsec) for the raw ctypes DLL call,
+     plus up to 10us for marshalling ctypes arguments!)
+
+DANGER NOTES:
+- If try to optimize things like rand() inplace,
+  be careful to ensure that the CURAND output size
+  requirements do not clobber memory at end of
+  *views* of matrices, i.e. if
+     X = eye(3)
+     X[0] = rand(1,3)  # this must not allow curand to modify X[1:] by accident!!
